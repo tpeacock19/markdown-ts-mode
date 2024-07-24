@@ -68,38 +68,57 @@
       (inline_link (link_destination) @font-lock-string-face)
       (shortcut_link (link_text) @link)])))
 
-(defun markdown-ts-imenu-node-p (node)
+(defun markdown-ts-heading-node-p (node)
   "Check if NODE is a valid entry to imenu."
-  (equal (treesit-node-type (treesit-node-parent node))
-         "atx_heading"))
+  (equal "atx_heading"
+	 (treesit-node-type (treesit-node-child node 0 t))))
 
-(defun markdown-ts-imenu-name-function (node)
+(defun markdown-ts-heading-name-function (node)
   "Return an imenu entry if NODE is a valid header."
-  (let ((name (treesit-node-text node)))
-    (if (markdown-ts-imenu-node-p node)
-	(thread-first (treesit-node-parent node)(treesit-node-text))
-      name)))
+  (let* ((head (treesit-node-child node 0 t))
+	 (text (treesit-node-child-by-field-name head "heading_content"))
+	 (name (or (treesit-node-text text) "")))
+    (string-trim name)))
 
-(defun markdown-ts-setup ()
-  "Setup treesit for `markdown-ts-mode'."
-  (setq-local treesit-font-lock-settings markdown-ts--treesit-settings)
-  (treesit-major-mode-setup))
-
+(defun markdown-ts-heading-name-function (node)
+  "Return an imenu entry if NODE is a valid header."
+  (let* ((head (treesit-node-child node 0 t))
+	 (text (treesit-node-child-by-field-name head "heading_content"))
+	 (name (treesit-node-text text)))
+    (and name (string-trim name))))
 
 (define-derived-mode markdown-ts-mode fundamental-mode "markdown[ts]"
   "Major mode for editing Markdown using tree-sitter grammar."
-  (setq-local font-lock-defaults nil
-	          treesit-font-lock-feature-list '((delimiter)
-					                           (paragraph)
-					                           (paragraph-inline)))
-
-  (setq-local treesit-simple-imenu-settings
-              `(("Headings" markdown-ts-imenu-node-p nil markdown-ts-imenu-name-function)))
-
-  (when (treesit-ready-p 'markdown-inline)
+  (when (and (treesit-ready-p 'markdown)
+	     (treesit-ready-p 'markdown-inline))
     (treesit-parser-create 'markdown-inline)
-    (treesit-parser-create 'markdown)
-    (markdown-ts-setup)))
+    (if (boundp treesit-primary-parser)
+	(setq-local treesit-primary-parser (treesit-parser-create
+					    'markdown))
+      (treesit-parser-create 'markdown))
+    (setq-local treesit-font-lock-feature-list '((delimiter)
+						 (paragraph)
+						 (paragraph-inline)))
+    (setq-local treesit-font-lock-settings markdown-ts--treesit-settings)
+    (setq-local treesit-thing-settings
+		`((markdown
+		   (heading ("section" . markdown-ts-heading-node-p))
+		   (paragraph "paragraph")
+		   (code-block ,(rx (or "indented_code_block""fenced_code_block")))
+		   (html-block "html_block")
+		   (block-quote "block_quote")
+		   (block (or code-block html-block quote-block paragraph)))
+		  (markdown-inline
+		   (link "inline_link")
+		   (code "code_span"))))
+    (setq-local treesit-outline-predicate `(or heading code-block))
+    (setq-local treesit-simple-imenu-settings
+		`(("Headings" "section"
+		   markdown-ts-heading-node-p
+		   markdown-ts-heading-name-function)))
+    (treesit-major-mode-setup)
+    (add-to-list 'auto-mode-alist
+		 '("\\(?:md\\|markdown\\|mkd\\|mdown\\|mkdn\\|mdwn\\)\\'" . markdown-ts-mode))))
 
 (provide 'markdown-ts-mode)
 ;;; markdown-ts-mode.el ends here
